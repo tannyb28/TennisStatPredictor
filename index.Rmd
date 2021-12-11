@@ -1,7 +1,7 @@
 ---
 title: 'Project 2: Data Mining, Classification, Prediction'
-author: "SDS322E"
-date: ''
+author: "Tanish Bhowmick"
+date: 'December 10, 2021'
 output:
   html_document:
     toc: yes
@@ -46,92 +46,197 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Tanish Bhowmick, tb33385
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+The dataset below contains the match information of every single match played in the significant pro level ATP tennis tournaments of the year 2021. I further specified the data selected to be targeted towards the statistics describing the winner. More specifically, I selected the length of time in the match, The number of 1st serves made in vs service points won, etc. I am hoping that the data selected below will provide a correlation between specific match statistics, and the likelihood of winning.
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
+library (readr)
 
-# if your dataset needs tidying, do so here
+urlfile="https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_2021.csv"
 
-# any other code here
+tennisdataraw<-read_csv(url(urlfile))
+
+
+keep <- c("tourney_date","surface","winner_name","winner_age","winner_hand","winner_ht","minutes","w_ace","w_1stIn","w_1stWon","w_bpSaved","w_bpFaced","w_SvGms")
+atpdata <- tennisdataraw[keep] %>% na.omit
+atpdata %>% mutate(bpProp = ifelse(((w_bpSaved/w_bpFaced)>0.5),'Good','Bad')) %>% na.omit() -> atpdata
+head(atpdata)
+
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+library(GGally)
+set.seed(322)
+
+atpnumdata <- atpdata %>% select(6:13)
+
+sil_width <- vector()
+for (i in 2:10) {
+    kms <- kmeans(atpnumdata, i)
+    sil <- silhouette(kms$cluster, dist(atpnumdata))
+    sil_width[i] <- mean(sil[, 3])
+}
+# largest average silhouette when number of clusters is 2
+
+atpcluster <- atpnumdata %>% pam(2)
+atpnumdata %>% mutate(cluster = as.factor(atpcluster$clustering)) %>%
+    ggpairs(columns = 1:8, aes(color = cluster))
 ```
 
-Discussion of clustering here
+The clustering above shows a comparison of a few different match statistics. The goal of the clustering was to test for correlations between variables such as height and number of service games, 1st serves in and break points faced, etc. The clusters appear to separate most significantly on the basis of the number of 1st serves either made in, or 1st service points won (the most separation in the graphs are showed in these two variables). Overall, we see positive correlations between many of the variables we thought we would, especially when comparing breakpoints saved and faced, as well as 1st serves in and won. However, we can also see certain plots (especially in the height and minutes played categories), skewing the results heavily and making it difficult to pinpoint the exact correlation if there is one at all.
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+atppca <- princomp(atpnumdata,cor = T)
+atpdf <- data.frame(PC1 = atppca$scores[, 1], PC2 = atppca$scores[, 
+    2], PC4 = atppca$scores[, 4])
+summary(atppca,loadings="T")
+
+ggplot(atpdf, aes(PC1, PC2)) + geom_point()
+
+
+
 ```
 
-Discussions of PCA here. 
+PC1 is unique in terms of components I have observed before. All the coefficients are of similar relative magnitudes implying that it is a general axis. However, all the loadings are negative, making it a general weakness axis. When there is a higher score on PC1, this means that the player will likely have lower statistics in terms of winning 1st serves and break points and the opposite will be observed with lower PC1 scores. PC2 is a height vs. ace axis. It displays a positive correlation between the two factors, meaning that a player who is taller is more likely to have more aces and a higher PC2 score indicates higher stats for both variables. This component makes sense because in the sport of tennis, it a common conception that a taller player will have access to better angles on their serve allowing for a more effective serve. 
+
+The plot shows a neutral correlation between Principal Component 1 and Principal Component 2. This is likely due to the fact that the variables of height and ace proportion could potentially be independent from other parts of their game. The general strength of a players game may have little to do with their actual height and serving ability. That is what leads to the largely neutral correlation observed in the plot.
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+atplinvalues <- atpdata %>% select(4:14) %>% select(-c(1:4,6,9,10))
+
+fit <- glm(bpProp == "Good" ~ ., data = atplinvalues, 
+    family = "binomial")
+score <- predict(fit, type = "response")
+class_diag(score, truth = atplinvalues$bpProp, positive = "Good")
+
+table(truth = atplinvalues$bpProp, predictions = score > 
+    0.5)
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+set.seed(1234)
+k = 10
+
+data <- atplinvalues[sample(nrow(atplinvalues)), ]  
+folds <- cut(seq(1:nrow(atplinvalues)), breaks = k, labels = F) 
+diags <- NULL
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$bpProp  
+    fit <- glm(bpProp == "Good" ~ ., data = train, 
+        family = "binomial")
+    probs <- predict(fit, newdata = test, type = "response")
+    diags <- rbind(diags, class_diag(probs, truth, positive = "Good"))
+}
+summarize_all(diags, mean)
 ```
 
-Discussion here
+While I was creating my atpdata set, I created a new variable from the pre-existing ones called bpProp. This translates to the proportion of break points one (it is the ratio of break points saved to break points faced). I made the standard for a good bpProp >0.5 so that the player should have to win more than half the breakpoints they face to prove their own ability.
+
+In the process of training the dataset, we get metrics such as accuracy, sensitivity (True Positive Rate), specificity (True Negative Rate), and precision. All of these values listed above are quite high both when training the data and cross-validating, implying the existence of a strong model. Another indicator of the accuracy of the model is the fact that the values for both training and cross-validation are in similar ranges, meaning that the model is good at predicting unseen data. There are no signs of overfitting data. The AUC is also very high at approximately 90% meaning there is a high classification accuracy. Overall the model is quite accurate in predicting data.
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+knn_fit <- knn3(bpProp == "Good" ~ ., data = atplinvalues, 
+    k = 5)
+
+y_hat_knn <- predict(knn_fit, atplinvalues)
+
+class_diag(y_hat_knn[, 2], atplinvalues$bpProp, positive = "Good")
+table(truth = atplinvalues$bpProp, predictions = y_hat_knn[, 2] > 0.5)
 ```
 
 ```{R}
-# cross-validation of np classifier here
+set.seed(1234)
+k2 = 10  
+
+data2 <- atplinvalues[sample(nrow(atplinvalues)), ]
+folds2 <- cut(seq(1:nrow(atplinvalues)), breaks = k2, labels = F)  
+
+diags2 <- NULL
+for (i in 1:k) {
+    train2 <- data2[folds2 != i, ]
+    test2 <- data2[folds2 == i, ]
+    truth2 <- test2$bpProp
+    fit2 <- knn3(bpProp ~ ., data = train2)
+    probs2 <- predict(fit2, newdata = test2)[, 1]
+    diags2 <- rbind(diags, class_diag(probs2, truth2, positive = "Good"))
+}
+summarize_all(diags2, mean)
 ```
 
-Discussion
+The metrics produced through the non-parametric classification method definitely show varied results when compared to the linear classifier above. The training data for the non-parametric classifier shows optimistic results, with higher AUC and accuracy values as well as other metrics in the same general range as the linear classifier data. However, the cross-validation data shows far lower values for the metrics, implying that the model does a poor job of predicting unseen data, unlike the linear classifier coded above. The AUC value for the cross-validation decreased significantly (still with a strong level of classification but still not as high functioning as the linear classifier).
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit <- lm(w_SvGms ~ ., data = atpnumdata)
+yhat <- predict(fit)
+
+# MSE
+mean((atpnumdata$w_SvGms - yhat)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+set.seed(1234)
+k3 = 5
+data3 <- atpnumdata[sample(nrow(atpnumdata)), ] 
+folds3 <- cut(seq(1:nrow(atpnumdata)), breaks = k, labels = F) 
+
+diags3 <- NULL
+for (i in 1:k) {
+    train3 <- data3[folds3 != i, ]
+    test3 <- data3[folds3 == i, ]
+    ## Fit linear regression model to training set
+    fit3 <- lm(w_SvGms ~ ., data = train3)
+    ## Get predictions/y-hats on test set (fold i)
+    yhat <- predict(fit3, newdata = test3)
+    ## Compute prediction error (MSE) for fold i
+    diags3 <- mean((test3$w_SvGms - yhat)^2)
+}
+mean(diags3) 
 ```
 
-Discussion
+For this regression and numerical prediction section, I tried to create a model meant to predict the number of service games for a player in a match and did this against the remaining numerical data in the dataset. The MSE for the overall data was relatively small with a value of only about 1.84. However, when taking the MSE of the cross-validation data, the MSE value increased significantly to about 5.24 indicating that there is signficant overfitting in the model. However, 5.24 isn't the worst value for MSE possible so the cross-validation is still sufficient, but perhaps not the best.
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3",required=F)
+ht_srv <- atpnumdata %>% select(c("winner_ht", "w_SvGms"))
 ```
 
 ```{python}
-# python code here
+import numpy
+# Python chunk
+htarray = numpy.array(r.ht_srv['winner_ht'])
+servearray = numpy.array(r.ht_srv['w_SvGms'])
+htarray.max()
+servearray.mean()
+```
+```{r}
+# Back to R
+boxplot(py$htarray)
 ```
 
-Discussion
-
-### Concluding Remarks
-
-Include concluding remarks here, if any
+The above code was very basic code to demonstrate how to share data between both R and Python. I first created a dataset specifically to be taken into python containing the player heights and the number of service games they had in their respective matches. I put these datasets into a numpy array to be utilized in python and took the means of both sets of data. I then brought one of the split up arrays (specifically the one containing player heights) and created a boxplot to plot the distribution of player heights with ggplot.
 
 
 
